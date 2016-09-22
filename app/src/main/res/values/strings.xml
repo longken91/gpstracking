@@ -1,4 +1,7 @@
 <resources>
     <string name="app_name">GPSTracking</string>
     <string name="title_activity_maps">Map</string>
+
+    <!--Database-->
+    <string name="database_version" translatable="false">1</string>
 </resources>
