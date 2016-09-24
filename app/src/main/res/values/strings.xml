@@ -4,4 +4,8 @@
 
     <!--Database-->
     <string name="database_version" translatable="false">1</string>
+    <string name="rationale_location">This app needs access to your location to know where you are.</string>
+    <string name="no_location_detected">
+        No location detected. Make sure location is enabled on the device.
+    </string>
 </resources>
