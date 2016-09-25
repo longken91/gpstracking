@@ -16,6 +16,8 @@ import com.android.gpstracking.R;
 import com.android.gpstracking.utils.Logger;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.location.LocationListener;
+import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationServices;
 
 /**
@@ -24,23 +26,32 @@ import com.google.android.gms.location.LocationServices;
 
 public class TrackingService extends Service
         implements GoogleApiClient.ConnectionCallbacks,
-        GoogleApiClient.OnConnectionFailedListener {
+        GoogleApiClient.OnConnectionFailedListener, LocationListener {
 
     /** Provides the entry point to Google Play services. */
     protected GoogleApiClient mGoogleApiClient;
+    /**
+     * The desired interval for location updates. Inexact.
+     * Updates may be more or less frequent.
+     */
+    public static final long UPDATE_INTERVAL_IN_MILLISECONDS = 10000;
+    /**
+     * The fastest rate for active location updates. Exact.
+     * Updates will never be more frequent than this value.
+     */
+    public static final long FASTEST_UPDATE_INTERVAL_IN_MILLISECONDS =
+            UPDATE_INTERVAL_IN_MILLISECONDS / 2;
+    /** Location request. */
+    private LocationRequest mLocationRequest;
     /** Represents a geographical location. */
-    protected Location mLastLocation;
-
-    @Override
-    public void onCreate() {
-        super.onCreate();
-        Logger.enter();
-        buildGoogleApiClient();
-        Logger.exit();
-    }
+    protected Location mCurrentLocation;
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        Logger.enter();
+        buildGoogleApiClient();
+        createLocationRequest();
+        Logger.exit();
         return START_NOT_STICKY;
     }
 
@@ -55,6 +66,7 @@ public class TrackingService extends Service
         super.onDestroy();
         Logger.enter();
         if (mGoogleApiClient.isConnected()) {
+            stopLocationUpdates();
             mGoogleApiClient.disconnect();
         }
         Logger.exit();
@@ -63,19 +75,7 @@ public class TrackingService extends Service
     @Override
     public void onConnected(@Nullable Bundle bundle) {
         Logger.enter();
-        if (ActivityCompat.checkSelfPermission(this,
-                Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
-                && ActivityCompat.checkSelfPermission(this,
-                Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            return;
-        }
-        mLastLocation = LocationServices.FusedLocationApi.getLastLocation(mGoogleApiClient);
-        if (mLastLocation != null) {
-            Toast.makeText(this, "Latitude: "+mLastLocation.getLatitude()
-                    + "Longitude: "+mLastLocation.getLongitude(), Toast.LENGTH_SHORT).show();
-        } else {
-            Toast.makeText(this, getString(R.string.no_location_detected), Toast.LENGTH_SHORT).show();
-        }
+        startLocationUpdates();
         Logger.exit();
     }
 
@@ -89,6 +89,22 @@ public class TrackingService extends Service
     @Override
     public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
         Logger.enter();
+        stopLocationUpdates();
+        stopSelf();
+        Logger.exit();
+    }
+
+
+    @Override
+    public void onLocationChanged(Location location) {
+        Logger.enter();
+        mCurrentLocation = location;
+        if (mCurrentLocation != null) {
+            Toast.makeText(this, "Latitude: "+mCurrentLocation.getLatitude()
+                    + "Longitude: "+mCurrentLocation.getLongitude(), Toast.LENGTH_SHORT).show();
+        } else {
+            Toast.makeText(this, getString(R.string.no_location_detected), Toast.LENGTH_SHORT).show();
+        }
         Logger.exit();
     }
 
@@ -103,7 +119,73 @@ public class TrackingService extends Service
                 .addOnConnectionFailedListener(this)
                 .addApi(LocationServices.API)
                 .build();
-        mGoogleApiClient.connect();
+        if (!mGoogleApiClient.isConnected() || !mGoogleApiClient.isConnecting()) {
+            mGoogleApiClient.connect();
+        }
         Logger.exit();
+    }
+
+    /**
+     * Sets up the location request. Android has two location request settings:
+     * {@code ACCESS_COARSE_LOCATION} and {@code ACCESS_FINE_LOCATION}. These settings control
+     * the accuracy of the current location. This sample uses ACCESS_FINE_LOCATION, as defined in
+     * the AndroidManifest.xml.
+     * <p/>
+     * When the ACCESS_FINE_LOCATION setting is specified, combined with a fast update
+     * interval (5 seconds), the Fused Location Provider API returns location updates that are
+     * accurate to within a few feet.
+     * <p/>
+     * These settings are appropriate for mapping applications that show real-time location
+     * updates.
+     */
+    protected void createLocationRequest() {
+        Logger.enter();
+        mLocationRequest = new LocationRequest();
+        // Sets the desired interval for active location updates. This interval is
+        // inexact. You may not receive updates at all if no location sources are available, or
+        // you may receive them slower than requested. You may also receive updates faster than
+        // requested if other applications are requesting location at a faster interval.
+        mLocationRequest.setInterval(UPDATE_INTERVAL_IN_MILLISECONDS);
+        // Sets the fastest rate for active location updates. This interval is exact, and your
+        // application will never receive updates faster than this value.
+        mLocationRequest.setFastestInterval(FASTEST_UPDATE_INTERVAL_IN_MILLISECONDS);
+        mLocationRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
+        Logger.exit();
+    }
+
+    /**
+     * Requests location updates from the FusedLocationApi.
+     */
+    protected void startLocationUpdates() {
+        Logger.enter();
+        // The final argument to {@code requestLocationUpdates()} is a LocationListener
+        // (http://developer.android.com/reference/com/google/android/gms/location/LocationListener.html).
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
+                && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            // TODO: Consider calling
+            //    ActivityCompat#requestPermissions
+            // here to request the missing permissions, and then overriding
+            //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
+            //                                          int[] grantResults)
+            // to handle the case where the user grants the permission. See the documentation
+            // for ActivityCompat#requestPermissions for more details.
+            return;
+        }
+        LocationServices.FusedLocationApi.requestLocationUpdates(
+                mGoogleApiClient, mLocationRequest, this);
+        Logger.exit();
+    }
+
+    /**
+     * Removes location updates from the FusedLocationApi.
+     */
+    protected void stopLocationUpdates() {
+        // It is a good practice to remove location requests when the activity is in a paused or
+        // stopped state. Doing so helps battery performance and is especially
+        // recommended in applications that request frequent location updates.
+
+        // The final argument to {@code requestLocationUpdates()} is a LocationListener
+        // (http://developer.android.com/reference/com/google/android/gms/location/LocationListener.html).
+        LocationServices.FusedLocationApi.removeLocationUpdates(mGoogleApiClient, this);
     }
 }
