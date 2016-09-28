@@ -54,6 +54,9 @@
 
         <service android:name=".service.TrackingService"
             android:exported="false"/>
+
+        <receiver android:name=".service.TrackerAlarmReceiver"
+            android:process=":remote"/>
     </application>
 
 </manifest>

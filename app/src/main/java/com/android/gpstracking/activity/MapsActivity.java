@@ -1,8 +1,13 @@
 package com.android.gpstracking.activity;
 
 import android.Manifest;
+import android.app.AlarmManager;
+import android.app.PendingIntent;
+import android.content.Context;
 import android.content.Intent;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.support.annotation.NonNull;
 import android.support.v7.app.AppCompatActivity;
 import com.android.gpstracking.R;
@@ -11,6 +16,7 @@ import com.android.gpstracking.directions.route.Route;
 import com.android.gpstracking.directions.route.RouteException;
 import com.android.gpstracking.directions.route.Routing;
 import com.android.gpstracking.directions.route.RoutingListener;
+import com.android.gpstracking.service.TrackerAlarmReceiver;
 import com.android.gpstracking.service.TrackingService;
 import com.android.gpstracking.utils.AfterPermissionGranted;
 import com.android.gpstracking.utils.EasyPermissions;
@@ -28,6 +34,7 @@ import com.google.android.gms.maps.model.Polyline;
 import com.google.android.gms.maps.model.PolylineOptions;
 
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.List;
 
 public class MapsActivity extends AppCompatActivity
@@ -39,11 +46,19 @@ public class MapsActivity extends AppCompatActivity
     /** Google Map. */
     private GoogleMap mMap;
     /** Polylines. */
-    private List<Polyline> polylines;
+    private List<Polyline> mPolylines;
+    /** Alarm Manager. */
+    private AlarmManager mAlarmManager;
+    /** Tracker Intent. */
+    private Intent mTrackerIntent;
+    /** Pending Intent. */
+    private PendingIntent mPendingIntent;
+    /** Interval In Minutes. */
+    private static final int FIVE_MINUTE = 300000;
     /** Start Position. */
-    private static LatLng start = new LatLng(35.4956941, 139.654035);
+    private static LatLng mStart = new LatLng(35.4956941, 139.654035);
      /** End Position. */
-    private static LatLng end = new LatLng(35.4922093,139.643945);
+    private static LatLng mEnd = new LatLng(35.4922093,139.643945);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -63,7 +78,7 @@ public class MapsActivity extends AppCompatActivity
     protected void onDestroy() {
         super.onDestroy();
         Logger.enter();
-        stopService(new Intent(this, TrackingService.class));
+
         Logger.exit();
     }
 
@@ -73,30 +88,30 @@ public class MapsActivity extends AppCompatActivity
         mMap = googleMap;
         // Start marker
         MarkerOptions options = new MarkerOptions();
-        options.position(start);
+        options.position(mStart);
         options.icon(BitmapDescriptorFactory.fromResource(R.drawable.start_blue));
         mMap.addMarker(options);
         // End marker
         options = new MarkerOptions();
-        options.position(end);
+        options.position(mEnd);
         options.icon(BitmapDescriptorFactory.fromResource(R.drawable.end_green));
         mMap.addMarker(options);
         // Route
-        route(start, end);
+        route(mStart, mEnd);
         Logger.exit();
     }
 
     @Override
     public void onPermissionsGranted(int requestCode, List<String> perms) {
         Logger.enter();
-        requestCurrentLocation();
+        startTrackingLocation();
         Logger.exit();
     }
 
     @Override
     public void onPermissionsDenied(int requestCode, List<String> perms) {
         Logger.enter();
-
+        finish();
         Logger.exit();
     }
 
@@ -117,12 +132,14 @@ public class MapsActivity extends AppCompatActivity
         Logger.enter();
         String perms[] = {Manifest.permission.ACCESS_FINE_LOCATION,
                 Manifest.permission.ACCESS_COARSE_LOCATION};
-        if (EasyPermissions.hasPermissions(this, perms)) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M
+                || EasyPermissions.hasPermissions(this, perms)) {
             Logger.d("Have permissions, do the thing !");
-            requestCurrentLocation();
+            startTrackingLocation();
         } else {
             Logger.d("Ask for both permissions !");
-            EasyPermissions.requestPermissions(this, getString(R.string.rationale_location),
+            EasyPermissions.requestPermissions(this,
+                    getString(R.string.rationale_location),
                     RQ_LOCATION_PERM, perms);
         }
         Logger.exit();
@@ -141,16 +158,16 @@ public class MapsActivity extends AppCompatActivity
     @Override
     public void onRoutingSuccess(List<Route> route, int shortestRouteIndex) {
 
-        CameraUpdate center = CameraUpdateFactory.newLatLng(start);
+        CameraUpdate center = CameraUpdateFactory.newLatLng(mStart);
         CameraUpdateFactory.zoomTo(20);
         mMap.moveCamera(center);
 
-        if(polylines != null && polylines.size()>0) {
-            for (Polyline poly : polylines) {
+        if(mPolylines != null && mPolylines.size()>0) {
+            for (Polyline poly : mPolylines) {
                 poly.remove();
             }
         }
-        polylines = new ArrayList<>();
+        mPolylines = new ArrayList<>();
         //add route(s) to the map.
         for (int i = 0; i < route.size(); i++) {
             PolylineOptions polyOptions = new PolylineOptions();
@@ -159,7 +176,7 @@ public class MapsActivity extends AppCompatActivity
             polyOptions.addAll(route.get(i).getPoints());
             if (mMap != null) {
                 Polyline polyline = mMap.addPolyline(polyOptions);
-                polylines.add(polyline);
+                mPolylines.add(polyline);
             }
         }
     }
@@ -174,7 +191,7 @@ public class MapsActivity extends AppCompatActivity
      * @param start
      * @param end
      */
-    public void route(LatLng start, LatLng end) {
+    private void route(LatLng start, LatLng end) {
         if (NetWorkUtils.isOnline(this)) {
             Routing routing = new Routing.Builder()
                     .travelMode(AbstractRouting.TravelMode.DRIVING)
@@ -186,12 +203,44 @@ public class MapsActivity extends AppCompatActivity
         }
     }
 
-    /**
-     * Request get current location.
-     */
-    private void requestCurrentLocation() {
+    private void startTrackingLocation() {
         Logger.enter();
-        startService(new Intent(this, TrackingService.class));
+        startAlarmManager();
+        Logger.exit();
+    }
+
+    private void stopTrackingLocation() {
+        Logger.enter();
+        cancelAlarmManager();
+        Logger.exit();
+    }
+
+    /**
+     * Start Alarm Manager.
+     */
+    private void startAlarmManager() {
+        Logger.enter();
+        mAlarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+        mTrackerIntent = new Intent(this, TrackerAlarmReceiver.class);
+        mPendingIntent = PendingIntent.getBroadcast(this, 0, mTrackerIntent, 0);
+        Calendar cal = Calendar.getInstance();
+        long firstTime = cal.getTimeInMillis();
+        mAlarmManager.setRepeating(AlarmManager.RTC_WAKEUP,
+                firstTime,
+                FIVE_MINUTE,
+                mPendingIntent);
+        Logger.exit();
+    }
+
+    /**
+     * Cancel Alarm Manager.
+     */
+    private void cancelAlarmManager() {
+        Logger.enter();
+        Intent trackerIntent = new Intent(this, TrackerAlarmReceiver.class);
+        PendingIntent pendingIntent = PendingIntent.getBroadcast(this, 0, trackerIntent, 0);
+        AlarmManager alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+        alarmManager.cancel(pendingIntent);
         Logger.exit();
     }
 }

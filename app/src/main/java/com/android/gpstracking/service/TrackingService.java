@@ -1,6 +1,7 @@
 package com.android.gpstracking.service;
 
 import android.Manifest;
+import android.app.IntentService;
 import android.app.Service;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -65,10 +66,7 @@ public class TrackingService extends Service
     public void onDestroy() {
         super.onDestroy();
         Logger.enter();
-        if (mGoogleApiClient.isConnected()) {
-            stopLocationUpdates();
-            mGoogleApiClient.disconnect();
-        }
+        stopLocationUpdates();
         Logger.exit();
     }
 
@@ -90,7 +88,6 @@ public class TrackingService extends Service
     public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
         Logger.enter();
         stopLocationUpdates();
-        stopSelf();
         Logger.exit();
     }
 
@@ -100,11 +97,10 @@ public class TrackingService extends Service
         Logger.enter();
         mCurrentLocation = location;
         if (mCurrentLocation != null) {
-            Toast.makeText(this, "Latitude: "+mCurrentLocation.getLatitude()
-                    + "Longitude: "+mCurrentLocation.getLongitude(), Toast.LENGTH_SHORT).show();
-        } else {
-            Toast.makeText(this, getString(R.string.no_location_detected), Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Latitude: " + mCurrentLocation.getLatitude()
+                    + "Longitude: " + mCurrentLocation.getLongitude(), Toast.LENGTH_SHORT).show();
         }
+        stopLocationUpdates();
         Logger.exit();
     }
 
@@ -160,8 +156,10 @@ public class TrackingService extends Service
         Logger.enter();
         // The final argument to {@code requestLocationUpdates()} is a LocationListener
         // (http://developer.android.com/reference/com/google/android/gms/location/LocationListener.html).
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
-                && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+        if (ActivityCompat.checkSelfPermission(this,
+                Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
+                && ActivityCompat.checkSelfPermission(this,
+                Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             // TODO: Consider calling
             //    ActivityCompat#requestPermissions
             // here to request the missing permissions, and then overriding
@@ -169,8 +167,10 @@ public class TrackingService extends Service
             //                                          int[] grantResults)
             // to handle the case where the user grants the permission. See the documentation
             // for ActivityCompat#requestPermissions for more details.
+            stopSelf();
             return;
         }
+        Logger.d("requestLocationUpdates");
         LocationServices.FusedLocationApi.requestLocationUpdates(
                 mGoogleApiClient, mLocationRequest, this);
         Logger.exit();
@@ -180,12 +180,19 @@ public class TrackingService extends Service
      * Removes location updates from the FusedLocationApi.
      */
     protected void stopLocationUpdates() {
+        Logger.enter();
         // It is a good practice to remove location requests when the activity is in a paused or
         // stopped state. Doing so helps battery performance and is especially
         // recommended in applications that request frequent location updates.
 
         // The final argument to {@code requestLocationUpdates()} is a LocationListener
         // (http://developer.android.com/reference/com/google/android/gms/location/LocationListener.html).
-        LocationServices.FusedLocationApi.removeLocationUpdates(mGoogleApiClient, this);
+
+        if (mGoogleApiClient != null && mGoogleApiClient.isConnected()) {
+            LocationServices.FusedLocationApi.removeLocationUpdates(mGoogleApiClient, this);
+            mGoogleApiClient.disconnect();
+        }
+        stopSelf();
+        Logger.exit();
     }
 }
